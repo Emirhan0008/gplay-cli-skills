@@ -5,6 +5,10 @@ description: Complete dual-track Google Play publishing system that advances the
 
 # gplay-parallel-publish-system — dual-track Play publishing (v2)
 
+> **App-agnostic / global skill.** Works for any Android package and locale:
+> substitute com.example.app, 	r-TR, paths and texts with your own. Not tied
+> to any repository. Written from a real end-to-end publishing session.
+
 Publishing touches TWO disjoint tool surfaces. The Play Developer API (what
 `gplay` drives) cannot create an app or fill the ten app-content declarations;
 the browser cannot efficiently bulk-upload metadata and images. Blocking them in

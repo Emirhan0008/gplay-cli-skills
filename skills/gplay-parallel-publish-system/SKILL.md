@@ -1,180 +1,180 @@
 ---
 name: gplay-parallel-publish-system
-description: Dual-track Google Play publishing SYSTEM that advances the gplay CLI and Playwright web-console automation in parallel as two independent tracks with explicit sync points. Orchestrates preflight, validate, metadata, listings, testers and releases over the CLI while simultaneously driving app creation, the ten app-content declarations and store graphics through browser automation. Includes the orchestrator/worker delegation model for AI agents, a merged gotcha catalog from real publishing sessions, and safety gates. Use when publishing an Android app end-to-end and you want maximum throughput instead of sequential hand-offs.
+description: Complete dual-track Google Play publishing system that advances the gplay CLI and Playwright web-console automation in parallel - orchestrator/worker model, phase-by-phase playbook with exact commands, a 40+ entry error catalog (symptom cause fix) built from real publishing sessions, policy gates, and verification doctrine. Use when publishing an Android app end-to-end, when a Play Console form or upload fails, or when you need the fastest safe path from AAB to a store release.
 ---
 
-# gplay-parallel-publish-system — dual-track Play publishing
+# gplay-parallel-publish-system — dual-track Play publishing (v2)
 
-Publishing a Google Play app is ONE goal served by TWO disjoint tool surfaces.
-Blocking them in sequence wastes half the wall-clock time. This skill defines a
-**system**: an orchestrator that runs both tracks simultaneously, syncs them at
-the few points where they truly meet, and never lets one track idle.
+Publishing touches TWO disjoint tool surfaces. The Play Developer API (what
+`gplay` drives) cannot create an app or fill the ten app-content declarations;
+the browser cannot efficiently bulk-upload metadata and images. Blocking them in
+sequence wastes half the wall-clock time. This skill runs both **in parallel**
+and pre-answers the errors each track throws.
 
-## 1. Capability matrix — who can do what
+```
+ORCHESTRATOR ── TRACK A (CLI worker, delegable to a fast model)
+            └─ TRACK B (Playwright driver, keep on the main agent)
+                 ▲ sync points S1..S4 ▼
+```
 
-| Task | gplay CLI (Track A) | Playwright (Track B) |
+- Track B is **single-threaded** (one browser session = one driver).
+- Track A is embarrassingly parallel — hand it to a subagent and drive the
+  browser while it works. Never sleep between browser rounds; spend that beat on
+  a CLI command.
+
+## 1. Capability matrix
+
+| Task | gplay CLI | Playwright |
 |---|---|---|
-| AAB/ APK offline compliance (`preflight`) | ✅ | ❌ |
-| Release readiness (`validate`) | ✅ | ❌ |
-| Tracks, releases, staged rollout | ✅ | slow (UI) |
-| Store listing text + images (bulk, char limits) | ✅ `sync`/`listings` | manual paste |
-| Testers / closed-testing groups | ✅ | slow (UI) |
-| Reviews, vitals, reports | ✅ | ❌ |
+| `preflight` offline compliance, `validate` readiness | ✅ | ❌ |
+| Tracks, releases, staged rollout, reviews, vitals, reports | ✅ | slow |
+| Store listing text + images (bulk, char limits) | ✅ preferred | fallback |
+| Testers / closed-testing groups | ✅ | slow |
 | **Create the app listing** | ❌ API-less | ✅ |
-| **App-content declarations (10 forms)** | ❌ API-less | ✅ |
-| **Exact-alarm policy declaration** | ❌ (policy gate) | ✅ (ask user first) |
-| Screenshots capture (device) | via `gplay-screenshot-automation` | via adb pipeline |
+| **10 app-content declarations** | ❌ API-less | ✅ |
+| **Exact-alarm policy declaration** | ❌ | ✅ (ask user first) |
 
-**Rule:** anything on the right of the CLI column that is marked ❌ is mandatory
-browser work; anything marked ✅ must NOT be done through the browser (it is
-slower and more fragile). Overlap (listings) prefers CLI.
-
-## 2. System architecture
-
-```
-ORCHESTRATOR (the main agent)
- ├─ TRACK A (CLI worker)      : subagent or same agent between browser rounds
- │    gplay preflight → validate → metadata sync → testers → release
- └─ TRACK B (Playwright driver): main agent, because the browser is stateful
-      app creation → declarations → store graphics → final submission
-        ▲ sync points (S1..S4) ▼
-```
-
-- **Track B must be single-threaded.** One browser session = one driver. Two
-  parallel Playwright flows on the same console fight over the same DOM.
-- **Track A is embarrassingly parallel.** Hand it to a subagent (a fast model is
-  enough — the commands are mechanical) and keep driving the browser meanwhile.
-- Interleave: every time Track B needs a page to settle, spend that beat issuing
-  a Track A command instead of sleeping.
-
-### Sync points
-
-| # | When | What must be true |
-|---|---|---|
-| S1 | before any upload | `gplay preflight` has **0 errors** (or the user accepted them) |
-| S2 | before store text is final | `gplay validate` char-limit findings resolved |
-| S3 | before sending declarations for review | all 10 declarations show `0 beyan` on the overview counter |
-| S4 | before release | `validate` ready + closed-testing rule satisfied (12 testers × 14 days on personal accounts) |
-
-## 3. Phase map (parallel assignments)
+## 2. Phase map
 
 | Phase | Track A (CLI) | Track B (Browser) |
 |---|---|---|
-| P0 Setup | `gplay auth login --service-account`, `apps list`, API enablement | log in, select developer account |
-| P1 Artifact | build AAB, `preflight` (S1), fix findings | `Uygulama oluştur` (app creation) |
-| P2 Content | `validate`, metadata draft (char limits) | 10 declarations (counter → 0) (S3) |
-| P3 Store | `sync` listing text/images | graphics upload fallback, feature graphic |
-| P4 Testing | `testers-orchestration`, internal/closed tracks | store listing review |
-| P5 Release | `release --dry-run` → release, `rollout` | publishing summary submit (approval gate) |
+| P0 Setup | `gplay auth login --service-account`, `apps list` | login, pick developer account |
+| P1 Artifact | build AAB, `preflight` (S1) | create app listing |
+| P2 Content | `validate`, metadata draft | 10 declarations → counter = 0 (S3) |
+| P3 Store | `sync import-listings`, `images upload` (S2) | verify in UI |
+| P4 Testing | `testers-orchestration`, closed track (S4) | listing review |
+| P5 Release | `release --dry-run` → `release`, `rollout` | publishing summary (approval gate) |
 
-## 4. Track A — CLI recipes
+Sync points: **S1** 0 preflight errors before upload · **S2** metadata within
+limits · **S3** declaration counter 0 · **S4** closed-testing rule satisfied.
+
+## 3. Command spine (Track A)
 
 ```powershell
-# Setup
-gplay auth login --service-account ./google-play-service-account.json
-gplay apps list --output table                 # proves account-level access
-gplay validate --package com.example.app       # ready: true? warnings?
+$g = "$env:LOCALAPPDATA\gplay\bin\gplay.exe"     # PATH may be stale - use full path
+& $g auth login --service-account ./google-play-service-account.json
+& $g apps list --output table                    # proves account access
+& $g validate --package com.example.app          # ready: true?
+& $g preflight --file app-release.aab            # human output has the texts!
+& $g preflight --file app-release.aab --listings-dir ./store-metadata
 
-# Artifact gate (S1) — human-readable output, JSON omits finding texts!
-gplay preflight --file app-release.aab
-gplay preflight --file app-release.aab --listings-dir ./metadata
-
-# Store text with limit validation (S2)
-gplay sync ... / gplay listings ... / gplay validate
-
-# Testing and release (S4)
-gplay release --package com.example.app --track internal --bundle app.aab --dry-run
-gplay rollout ...
+# edit-session pattern (listings AND images both need it)
+$edit = ([regex]::Match((& $g edits create --package com.example.app | Out-String), '\d{15,}')).Value
+& $g sync import-listings --package com.example.app --edit $edit --dir ./store-metadata
+& $g images upload --package com.example.app --edit $edit --locale tr-TR --type featureGraphic --file fg.png
+& $g images upload --package com.example.app --edit $edit --locale tr-TR --type icon --file icon-512.png
+& $g images upload --package com.example.app --edit $edit --locale tr-TR --type phoneScreenshots --file s1.png
+& $g edits validate --package com.example.app --edit $edit
+& $g edits commit  --package com.example.app --edit $edit
 ```
 
-### CLI gotchas (real sessions)
-- **PATH not refreshed after install** in the current shell → call
-  `%LOCALAPPDATA%\gplay\bin\gplay.exe` by full path or refresh `Path` from the
-  registry.
-- **`apps list` 403 SERVICE_DISABLED** — "Google Play Developer Reporting API has
-  not been used in project <n>": the SA's GCP project lacks the API. Fix:
-  `gcloud services enable playdeveloperreporting.googleapis.com --project=<n>`.
-  Note `validate` may still work (different API surface) — do not read one as
-  proof of the other.
-- **`preflight --output json` prints counts, not finding texts.** For messages
-  and hints run it in human mode (or both).
-- **`credential_file: expo-root.pem` is a false positive** — Expo's PUBLIC
-  update-verification certificate. Verify: extract the PEM; `BEGIN CERTIFICATE`
-  = fine, `BEGIN * PRIVATE KEY` = critical.
-- **SDK detection ≠ activation.** Firebase classes ship via FCM dependencies
-  (`google-services.json` absent = no data flow) — still disable analytics
-  explicitly (`firebase_analytics_collection_enabled=false`) so the Data safety
-  declaration stays truthful, and do NOT add `AD_ID` if there are no ads.
-- **`eas submit --track` flag does not exist** on older eas-cli — put the track
-  in `eas.json`. Submission failure "Something went wrong" almost always means
-  **the app does not exist in Play Console yet**.
-- **`gcloud ... keys create` leaves a 0-byte file on failure** — check size, not
-  `Test-Path`.
+Verification doctrine: every write is proven by **re-reading it** (`images list`
+needs `--edit --type`; `listings get --locale`). An upload response is evidence;
+a commit response alone is not proof the payload persisted.
 
-## 5. Track B — browser recipes
+## 4. Error catalog — symptom → cause → fix
 
-App creation → declarations → store graphics. Progress is measured by the
-overview counter: *"N beyanla ilgili işlem yapmanız gerekiyor"* must reach **0**.
+### 4.1 Setup & auth
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 1 | `gcloud projects create` → RESOURCES_NOT_FOUND / quota | personal account out of project slots | use an existing project, or delete an unused one (30-day recovery) |
+| 2 | `keys create` failed but `Test-Path` says the file exists | failed command leaves a **0-byte** file | check **size**, delete stubs |
+| 3 | `gcloud --impersonate-service-account` fails | missing `roles/iam.serviceAccountTokenCreator` | grant the role or use the key file directly |
+| 4 | "Where is API & Services in Play Console?" | it is in **Google Cloud Console** | create SA there; invite it under Play Console → Users and permissions (Publisher) |
+| 5 | Playwright lands on `google.play/business/` marketing page | no console session | user logs in once; then **select the developer account** in the account picker |
+| 6 | `gplay` not found right after install | PATH not refreshed in this shell | call `%LOCALAPPDATA%\gplay\bin\gplay.exe` or reload Path from the registry |
+| 7 | CLI prompts die with "stdin is not readable" | interactive prompt in a non-TTY | pass flags explicitly; use `--confirm` |
+| 8 | `gplay apps list` → 403 SERVICE_DISABLED | "Play Developer Reporting API" disabled in the SA's GCP project | `gcloud services enable playdeveloperreporting.googleapis.com --project=<n>` |
+| 9 | SA cannot see a newly created app | grant is app-scoped, not account-scoped | re-invite at account level, or grant per app |
+| 10 | `validate` works but `apps list` 403s (or vice versa) | different API surfaces | fix each API separately; never read one as proof of the other |
 
-Declaration answer matrix for a no-data utility: Ads **No**, Login **No**,
-Ad ID **No**, Government **No**, Financial → **"no financial features" (last
-checkbox)**, Data safety (wizard, collects? **No**), Content rating (IARC: all
-**No**, category "All other app types", accept IARC terms), Target audience
-**18+**, Health apps → pick the truthful feature (medication reminder =
-"medication & treatment management"), Exact alarms → **policy gate: only
-"Alarm clock"/"Calendar" offered — ask the user.**
+### 4.2 Artifact & preflight
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 11 | `eas submit` → "Something went wrong when submitting your app" | **the app does not exist in Play Console yet** (message is always vague) | create the app listing first, resubmit |
+| 12 | `eas submit --track` → "Nonexistent flag" | older eas-cli | put the track in `eas.json > submit.*.android.track`, use `--latest` |
+| 13 | preflight ERROR `credential_file: ... expo-root.pem` | Expo's **public** update-verification certificate | extract the PEM: `BEGIN CERTIFICATE` = false positive (document it); `BEGIN * PRIVATE KEY` = critical |
+| 14 | preflight `--output json` shows counts only | JSON omits finding texts | run human output for messages + hints |
+| 15 | `tracking_sdk: Firebase Analytics` + `advertising_id` warning | FCM dependency ships SDK classes | no `google-services.json` = no data flow; still set `firebase_analytics_collection_enabled=false`; do NOT add `AD_ID` without ads |
+| 16 | `exported_component` warnings on widget providers | the launcher must read the provider | document as accepted risk; blind `exported=false` breaks widgets |
+| 17 | `policy: targetSdkVersion below floor` | Play raises the floor each August (36 from 2026-08-31) | bump targetSdk; `--min-target-sdk` override if the tool lags |
+| 18 | `native_libs: 16 KB page alignment` / missing arm64 | old NDK/build tooling | rebuild with current RN/NDK templates |
 
-### Browser gotchas (real sessions — each cost a debugging round)
-1. **Refs go stale** after every DOM change → re-snapshot before each click;
-   `browser_click` requires `target=<ref>`.
-2. **No `setTimeout`** in the code runtime → wait with `browser_find` + snapshot
-   loop; the first snapshot after `navigate` is a loading shell.
-3. **Turkish characters in code strings get mangled** → match ASCII fragments
-   only (`"Hay"`, `"Kaydet"`, `"Oturum"`); keep Turkish in `element` labels.
-4. **Material checkboxes**: clicking the input only focuses it (`[active]`); click
-   the adjacent label node and require `[checked]` in a snapshot.
-5. **Suffix softening**: "Taslağı kaydet" does NOT contain "Taslak" (k→ğ);
-   `"Kaydet"` matching is case-sensitive.
-6. **Name collisions are destructive**: `"leri"` also matches
-   "Değişiklikleri sil" → pick buttons by label length/endsWith; if a discard
-   dialog opens, press **Cancel**.
-7. **Single-page wizards**: "İleri" loops the same screen; the finish button is
-   "Taslağı kaydet"/"Kaydet".
-8. **Saving ≠ submitting**: toasts say *"…Yayınlama özeti sayfasından incelemeye
-   gönderin."* — drafts are sent for review from the publishing summary.
-9. **Questionnaire completion ≠ declaration completion**: after an IARC
-   questionnaire save, the counter may not move until the terms checkbox is
-   checked and the flow re-walked to a final save.
-10. **Screenshots**: PowerShell `>` corrupts PNGs (UTF-16) → `screencap` on-device
-    then `pull`; `adb input text` cuts at spaces → `%s`; Play wants 16:9 or 9:16 →
-    crop 1080×2400 to 1080×1920 and drop the status bar (personal icons).
+### 4.3 Browser automation (Playwright)
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 19 | click lands wrong or times out | **refs go stale** after every DOM change | re-snapshot before every click |
+| 20 | `browser_click` → "target: Missing key" | `element` alone is not accepted | pass `target: "<ref>"` |
+| 21 | snapshot right after navigate shows a shell | page not rendered; `setTimeout` unavailable | wait loop: `browser_find` + snapshot until the marker appears |
+| 22 | `includes("Oturum açma")` silently false | **Turkish characters get mangled** in code strings | match ASCII fragments only (`"Hay"`, `"Kaydet"`, `"Oturum"`); Turkish only in `element` labels |
+| 23 | checkbox click only focuses (`[active]`) | Material inputs swallow clicks | click the adjacent label `generic` node; require `[checked]` in a snapshot |
+| 24 | button not found although it exists | **suffix softening**: "Taslağı kaydet" contains neither "Taslak" nor "Kaydet" (k→ğ, case) | match `m[1].toLowerCase().endsWith("kaydet")` on the parsed label |
+| 25 | "Changes discarded?" dialog appears unexpectedly | `"leri"` matched **"Değişiklikleri sil"** (destructive!) | pick buttons by label length/`endsWith`; in such a dialog always press **Cancel** |
+| 26 | Next button loops the same screen | single-page wizard; "İleri" only scrolls | the finish button is "Taslağı kaydet"/"Kaydet" |
+| 27 | Save stays `[disabled]` after typing | React validation fires on blur | press Tab then Enter; verify the value in the snapshot |
+| 28 | click blocked: "intercepts pointer events" | modal/overlay pane | Escape, or navigate directly — the error log leaks the real URL |
+| 29 | `/app/<id>/store-listing` lands on the app list | wrong path in the modern console | use `/app/<id>/store-presence/store-listing` |
+| 30 | questionnaire "saved" but declaration still counted | terms checkbox unchecked / flow not re-walked | check the terms box, re-walk to a final save; watch the counter |
+| 31 | help tabs multiply and confuse snapshots | "learn more" links open tabs | `browser_tabs close` the extras; verify `Page URL` before parsing |
+| 32 | regex in code fails "Invalid regular expression flag" | regex literals with Turkish/space/quote content | use `includes()` filters, never regex with localized text |
 
-## 6. Delegation templates
+### 4.3 Metadata & images
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 33 | `images upload` → "Error: --locale is required" | store images are **per-locale** | add `--locale tr-TR` to every upload |
+| 34 | `images list` → "--type is required" / "--edit is required" | listing is per-edit+type | pass `--edit <id> --type phoneScreenshots` |
+| 35 | feature graphic rejected | it must be **exactly 1024×500** (1020 was tried) | regenerate precisely; icon exactly 512×512 |
+| 36 | uploaded images vanish | `edits commit` forgotten | always `edits validate` → `edits commit` |
+| 37 | `edits delete` refuses | requires `--confirm` | pass it; otherwise stale edits expire (harmless) |
+| 38 | PNG corrupted (`FF FE` signature) after capture | PowerShell `>` writes UTF-16 | capture on-device (`screencap -p /sdcard/x.png`) then `adb pull` |
+| 39 | typed names lose spaces ("D Vitamini" → "D") | `adb input text` splits at spaces | use `%s` escapes (`C%sVitamini%s1000`) |
+| 40 | Turkish text looks like `?la?` in the console | console code page, not file corruption | verify bytes (`C4 B0` = İ) or re-read via API |
+| 41 | metadata scanner errors | limits are counted in **runes**: title ≤30, short ≤80, full ≤4000, notes ≤500 | validate with `preflight --listings-dir` before upload |
 
-**Track A worker (fast model is enough):**
-> Windows PowerShell task. Install gplay, `auth login --service-account <key>`,
-> run `preflight --file <aab>` (human output), `validate --package <pkg>`,
-> report: install, auth, findings (errors with message+hint, first 10 warnings),
-> validate readiness. Max 8 shell calls. Execute mechanically.
+### 4.4 Submission & release
+| # | Symptom | Cause | Fix |
+|---|---|---|---|
+| 42 | production release blocked | personal developer accounts require **12 testers × 14 days** closed testing | run closed track first (`gplay testers-orchestration`); that wait cannot be skipped |
+| 43 | exact-alarm declaration offers only "Alarm clock"/"Calendar" | Play restricts `USE_EXACT_ALARM` | **policy gate — ask the user**. Options: declare the closest truthful one, or drop to `SCHEDULE_EXACT_ALARM` + settings prompt (rebuild) |
+| 44 | listing review asks for more | missing privacy policy URL / data safety / graphics | complete the declaration counter (must show 0) |
+| 45 | first release needs review | Play reviews new apps fully | internal track is instant; closed/production get reviewed — set expectations |
 
-**Track B stays with the orchestrator** (stateful browser, policy judgment).
+## 5. Policy gates (never decide alone)
 
-## 7. Safety gates
+1. Any declaration you are not **sure** is truthful (exact alarms is the classic).
+2. Production releases, pricing changes, app deletion.
+3. Data safety wording when an SDK ships but does not flow data — say what is
+   true after your fix (disable the SDK, then declare "no collection").
+4. Screenshot/sample data: **no prescription drug names**, no real health data,
+   no medical claims ("tedavi eder" etc.). Vitamins/OTC only.
 
-1. Production releases, pricing and policy declarations with ambiguity require
-   **user approval**. The exact-alarm declaration is the classic trap.
-2. Every write is verified (toast + counter decrement + re-read).
-3. Never print, log or commit service-account keys; never delete a Google API
-   key a scanner flags — advise restricting it.
-4. Sample data in screenshots: no prescription drug names, no real health data,
-   no medical claims.
+## 6. Browser gotcha quick-card (paste into any session)
+
+- Re-snapshot before every click; `target=<ref>` is mandatory.
+- No `setTimeout`; wait with `browser_find` + snapshot loop.
+- Match ASCII fragments only; Turkish goes in `element` labels only.
+- Checkboxes: click the label, then require `[checked]`.
+- Button labels: parse `button "(.+?)" \[` and compare `endsWith` + length.
+- Destructive dialogs: always Cancel, then re-verify state.
+- Verify every write twice: toast + re-read (counter, `listings get`, `images list`).
+
+## 7. Delegation templates
+
+**Track A worker** (fast model is enough — mechanical):
+> Windows PowerShell batch. Full-path gplay. Tasks: (1) push branch, (2) `apps
+> list`, (3) write UTF-8 metadata files with exact texts, (4) `preflight
+> --listings-dir`, (5) edit-session upload + commit. Report each command's
+> evidence. Max 12 shell calls.
+
+**Track B stays with the orchestrator** — stateful browser + policy judgment.
 
 ## 8. Definition of done
 
-- [ ] S1: preflight 0 errors (or accepted with reasons)
-- [ ] S2: listing texts within limits (validate clean)
-- [ ] S3: declaration counter = 0 (exact-alarm decision recorded)
-- [ ] S4: closed testing started (12 testers × 14 days on personal accounts)
-- [ ] Store graphics: 2-8 phone screenshots (9:16) + 1024×500 feature graphic
+- [ ] S1 preflight clean (or accepted with reasons recorded)
+- [ ] S2 metadata validated and uploaded (re-read proof)
+- [ ] S3 declaration counter = 0 ("Tamamlanmayı bekleyen beyan yok")
+- [ ] S4 closed testing started (12 × 14) or production access applied
+- [ ] Graphics: icon 512×512, feature 1024×500, 2-8 phone screenshots (9:16 crop,
+      status bar removed)
 - [ ] Privacy policy URL live and truthful
 - [ ] Final report: done / uncertain / user-only steps / links

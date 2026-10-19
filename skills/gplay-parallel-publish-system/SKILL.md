@@ -100,6 +100,7 @@ a commit response alone is not proof the payload persisted.
 | 13 | preflight ERROR `credential_file: ... expo-root.pem` | Expo's **public** update-verification certificate | extract the PEM: `BEGIN CERTIFICATE` = false positive (document it); `BEGIN * PRIVATE KEY` = critical |
 | 14 | preflight `--output json` shows counts only | JSON omits finding texts | run human output for messages + hints |
 | 15 | `tracking_sdk: Firebase Analytics` + `advertising_id` warning | FCM dependency ships SDK classes | no `google-services.json` = no data flow; still set `firebase_analytics_collection_enabled=false`; do NOT add `AD_ID` without ads |
+| 15b | warning STILL present after the fix | scanner counts SDK **classes** (static); the meta-data disables **runtime** collection | expected - do NOT exclude the SDK via gradle (breaks FCM). Truth test: collection meta-data off + no google-services.json + no AD_ID |
 | 16 | `exported_component` warnings on widget providers | the launcher must read the provider | document as accepted risk; blind `exported=false` breaks widgets |
 | 17 | `policy: targetSdkVersion below floor` | Play raises the floor each August (36 from 2026-08-31) | bump targetSdk; `--min-target-sdk` override if the tool lags |
 | 18 | `native_libs: 16 KB page alignment` / missing arm64 | old NDK/build tooling | rebuild with current RN/NDK templates |

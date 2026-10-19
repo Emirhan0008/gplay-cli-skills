@@ -160,3 +160,35 @@ gplay images list \
 - `images delete-all` needs `--confirm`; without it the command refuses.
 - Use explicit long flags (`--package`, `--edit`, `--locale`, `--type`, `--file`).
 - Default to JSON for machine steps, `--output table` for human review.
+
+## Appendix — lessons learned (Playwright web-UI capture)
+
+When you must capture or upload screenshots by driving the Play Console web UI
+with Playwright (the API path above is preferred whenever it works), these
+gotchas each cost a debugging round:
+
+- **Stale refs.** The DOM changes on every navigation and save; re-snapshot
+  before each click and pass `target=<ref>`. An element handle alone is not
+  accepted by the click tool.
+- **No timers.** `setTimeout` is unavailable in the code runtime. Wait by
+  polling `browser_find` plus a re-snapshot loop; the first snapshot right after
+  a navigation is usually a loading shell, not the real form.
+- **Turkish characters mangle in code strings.** Match ASCII fragments only
+  (`Hay`, `Kaydet`, `Yukle`, `Onayla`); keep real Turkish text solely in the
+  element label you target.
+- **Material checkboxes.** Clicking the `<input>` only focuses it (shows
+  `[active]`). Click the adjacent generic `LABEL` node instead, then verify the
+  `[checked]` attribute in a fresh snapshot.
+- **Case-sensitive / softening mismatches.** `Kaydet` matching is
+  case-sensitive, and Turkish suffixes soften letters (`Taslak` → `Taslaki`),
+  so a naive `contains` match misses the button. Match on a stable ASCII stem.
+- **Destructive name collisions.** A short prefix such as `Ileri` can also match
+  a destructive label like `Degisiklikleri sil`. Disambiguate by label length or
+  `endsWith`, and if a "Changes discarded?" dialog appears, press Cancel — never
+  confirm.
+- **Single-page wizards.** Some forms loop the same screen when you press Next;
+  the real finish action is "save draft". Confirm progress with the counter
+  ("N beyanla ilgili işlem yapmanız gerekiyor") decrementing to 0.
+
+For the full web-UI automation workflow, see the
+`gplay-web-console-automation` skill.
